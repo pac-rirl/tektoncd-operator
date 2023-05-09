@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+#
+# Template that supports sparse cloning and checkout of the DevContainer resources for a project
+# This template should be copied and tuned for each specific project.
+#
+# CONTAINER_REPO_URL  > The base URL for the provisioning repository. https://git.panasonic.aero/devops/devcontainers/provisioning
+# CONTAINER_REPO_PATH > The project specific path (within repository at the CONTAINER_REPO_URL) for the project specific DevContainer resources
+# CONTAINER_REPO_REF  > The reference to use for the shallow clone (default=main)
+#
+# Uses git clone --filter and git sparse-checkout: requires git 2.25.* or later.
+##
+## Updated to fetch containers support library as well.
+##
+#
+##
+### FUNCTIONS
+function TuneSettings() {
+  if [ -z "${CONTAINER_REPO_URL}"  ]; then export CONTAINER_REPO_URL="git@git.panasonic.aero:devops/devcontainers/provisioning.git"; fi                                         
+  if [ -z "${CONTAINER_REPO_PATH}" ]; then export CONTAINER_REPO_PATH="template/toolchains/tekton-cd-builder"; fi                                          
+  if [ -z "${CONTAINER_REPO_LIBS}" ]; then export CONTAINER_REPO_LIBS="containers/library"; fi                                          
+  if [ -z "${CONTAINER_REPO_REF}"  ]; then export CONTAINER_REPO_REF="-b main"; fi                                          
+}
+function SetUp() {
+    export CONTAINER_SELF="$(basename -- $0 .sh)"
+    export CONTAINER_PATH_ABSOLUTE="$( cd "$( dirname "${BASH_SOURCE[0]}")/" >/dev/null 2>&1 && pwd )"
+    export CONTAINER_SELF_SCRIPT="$CONTAINER_PATH_ABSOLUTE/$CONTAINER_SELF"
+    export CONTAINER_PATH_SELF="$CONTAINER_PATH_ABSOLUTE/.devcontainer"
+    export CONTAINER_PATH_LIBS="$CONTAINER_PATH_SELF/library"
+    export CONTAINER_PATH_TEMP=$(mktemp -d -t .devcontainer-XXXXXXXXXXXXXXXX)
+    TuneSettings
+}
+function TearDown() {
+
+  echo "[$CONTAINER_SELF]> Fetch Development Container Tear Down [$fetch_status]"
+  if [  -z "$DEBUG" ]; then 
+   [[ -e "$CONTAINER_PATH_TEMP" ]] && rm -rf $CONTAINER_PATH_TEMP
+  else 
+   echo "[$CONTAINER_SELF]> Fetch Development Container Tear Down SKIPPED [$DEBUG]"
+  fi  
+}
+function Requires() {
+    export CONTAINER_GIT_MAJOR_REQUIRED=2
+    export CONTAINER_GIT_MINOR_REQUIRED=25
+
+    export CONTAINER_GIT_SUPPORT="false"
+    export CONTAINER_GIT_VERSION=$(git --version| awk '{print $3}')
+    export CONTAINER_GIT_MAJOR=$(echo $CONTAINER_GIT_VERSION| cut -d'.' -f1)
+    export CONTAINER_GIT_MINOR=$(echo $CONTAINER_GIT_VERSION| cut -d'.' -f2)
+
+    if [[ $CONTAINER_GIT_MAJOR -ge $CONTAINER_GIT_MAJOR_REQUIRED && $CONTAINER_GIT_MINOR -ge $CONTAINER_GIT_MINOR_REQUIRED ]]; then CONTAINER_GIT_SUPPORT="true"; fi
+    if [[ "$CONTAINER_GIT_SUPPORT" != "true" ]]; then
+       echo "[$CONTAINER_SELF]> Fetch Development Container Requires GIT [$CONTAINER_GIT_MAJOR_REQUIRED.$CONTAINER_GIT_MINOR_REQUIRED.1] or later"
+       echo "[$CONTAINER_SELF]> FAILURE Requires:           FOUND    GIT [$CONTAINER_GIT_VERSION]"
+       false
+    fi
+}
+function OnExit() {
+   echo "[$CONTAINER_SELF]> Fetch Development Container Exit Handler [$fetch_status]"
+   TearDown
+}
+function ShallowClone() {
+    echo "[$CONTAINER_SELF]> Fetch Development Container Resources for Shallow Clone...."
+    if [ -d "${CONTAINER_PATH_TEMP}" ]; then 
+      rm -rf ${CONTAINER_PATH_TEMP}
+    fi  
+    if [ -d "${CONTAINER_PATH_SELF}" ]; then 
+      rm -rf ${CONTAINER_PATH_SELF} 
+    fi  
+    mkdir -p ${CONTAINER_PATH_SELF} ${CONTAINER_PATH_LIBS}
+
+    set -x; git clone --filter=blob:none $CONTAINER_REPO_URL $CONTAINER_REPO_REF $CONTAINER_PATH_TEMP; set +x
+    pushd $CONTAINER_PATH_TEMP 2>&1 >/dev/null
+      set -x; 
+        git sparse-checkout init && git sparse-checkout set $CONTAINER_REPO_PATH $CONTAINER_REPO_LIBS && fetch_status=0
+        (cd $CONTAINER_REPO_PATH/; tar -cf - .) |(cd ${CONTAINER_PATH_SELF} ; tar -xf - && fetch_status=0;)
+        (cd $CONTAINER_REPO_LIBS/; tar -cf - .) |(cd ${CONTAINER_PATH_LIBS} ; tar -xf - && fetch_status=0;)
+      set +x; 
+    popd                       2>&1 >/dev/null  
+    TearDown
+    echo "[$CONTAINER_SELF]> Fetch Development Container Resources for Shallow Clone....[$fetch_status]"
+}
+function Details() {
+  echo ""
+  echo "[$CONTAINER_SELF]> Details: ##########################"
+
+  printenv| grep ^CONTAINER_| sort 
+
+  echo "[$CONTAINER_SELF]> Details: ##########################"
+  echo ""
+}
+
+##
+### MAIN ENTRY
+fetch_status=1; set -o errexit pipefail; trap OnExit EXIT  # Exit HANDLER
+
+SetUp
+Requires
+if [ ! -z "$TRACE" ]; then Details; fi
+
+echo "[$CONTAINER_SELF]> Fetch Development Container Resources for [${CONTAINER_REPO_PATH}] from repository [$CONTAINER_REPO_URL]"
+ShallowClone
+
+echo "[$CONTAINER_SELF]> Fetch Development Container Reported [$fetch_status]"
+exit $fetch_status
+##

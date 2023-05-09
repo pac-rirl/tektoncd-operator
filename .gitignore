@@ -81,3 +81,8 @@ tags
 .idea/*
 
 .bin/
+
+### vscode devcontainers
+.devcontainer
+
+
